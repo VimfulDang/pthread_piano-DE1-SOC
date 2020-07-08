@@ -1,0 +1,2 @@
+# pthread_piano-DE1-SOC
+Synthesize middle C range on piano as a multithreading and working with an audio CODEC exercise. The program has two threads, one which listen for keyboard inputs to simulate piano keys and another to calculate the samples from the keys pressed. The tone_volume is the mutex variable and is updated with a decaying factor until the key is no longer pressed in the *audio_thread. The main thread updates the tone_volume to 1 when the corresponding keyboard is pressed. The sample is then synthesized and written to the LINEOUT of the audio codec.
