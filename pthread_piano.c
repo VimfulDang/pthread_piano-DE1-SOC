@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <string.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <math.h>
@@ -16,25 +17,27 @@
 #define SAMPLE_RATE 8000
 #define TWO_PI	6.28318531
 #define TOTAL_TONES 13
+#define MAX_VOLUME 0x7FFFFFFF
 
 //Declare the tones frequency and corresponding input_event value for q2w3er5t6y7ui
-static double note[TOTAL_NOTES] = {261.626, 277.183, 293.665, 311.127, 329.628, 
+static double note[TOTAL_TONES] = {261.626, 277.183, 293.665, 311.127, 329.628, 
 					349.228, 369.994, 391.995, 415.305, 440.000, 466.164,
 					493.883, 523.251};
 
-static double keyboard_note[TOTAL_NOTES] = {16, 2, 17, 3, 18, 19, 5, 20, 6, 21, 
+static double keyboard_note[TOTAL_TONES] = {16, 2, 17, 3, 18, 19, 5, 20, 6, 21, 
 											7, 22, 23};
 
 //arbitrary fade factor, higher frequency has faster decay
-static double tone_fade_factor[TOTAL_NOTES] = {.7, .68, .66, .64, .62, .60, .58, .56, .54, .52
+static double tone_fade_factor[TOTAL_TONES] = {.7, .68, .66, .64, .62, .60, .58, .56, .54, .52,\
 									.50, .58, .56};
 
-int tone_volume[TOTAL_NOTES];
+static int tone_volumes[TOTAL_TONES];
 static volatile int * audio_base_ptr;
+static pthread_mutex_t mutex_tone_volume;
 
-void write_to_audio_port(double);
+void write_to_audio_port(int);
 
-void * audio_thread(void) {
+void *audio_thread(void * param) {
 	int i;
 	double sample;
 	double nth_sample = 0;
@@ -43,15 +46,16 @@ void * audio_thread(void) {
 		//if it was, thread will halt at this point
 		pthread_testcancel();
 		sample = 0;
-		for (i = 0; i < TOTAL_NOTES; i++, nth_sample++) {
-			if (tone_volume[i] > 0) {
-				sample += tone_volume[i] * sin(nth_sample * note[i] * TWO_PI / SAMPLE_RATE);
+		for (i = 0; i < TOTAL_TONES;7J i++, nth_sample++) {
+			if (tone_volumes[i] > 0) {
+				sample += MAX_VOLUME * tone_volumes[i] * sin(nth_sample * note[i] * TWO_PI / SAMPLE_RATE);
 				pthread_mutex_lock(&mutex_tone_volume);
-				tone_volume[i] *= tone_fade_factor[i];
+				tone_volumes[i] *= tone_fade_factor[i];
 				pthread_mutex_unlock(&mutex_tone_volume);
-				write_to_audio_port((int) sample);
 			}
 		}
+		sample /= i;
+		write_to_audio_port((int) sample);
 	}
 }
 
@@ -63,13 +67,13 @@ void catchSIGINT (int signum) {
 int main(int argc, char *argv[]) {
 	struct input_event ev;
 	stop = 0;
-	pthread_id tid;
+	pthread_t tid;
 	void * LW_virtual;
 	int fd_keyboard, fd_mmap, event_size = sizeof(struct input_event);
-	int ind;
+	int ind, err;
 
 	//Initialize tone_volumes
-	for(ind = 0; ind < TOTAL_NOTES; ind++) {
+	for(ind = 0; ind < TOTAL_TONES; ind++) {
 		tone_volumes[ind] = 0;
 	}
 
@@ -84,7 +88,7 @@ int main(int argc, char *argv[]) {
 
 	if (LW_virtual == NULL) {
 		printf("ERROR: could not mmap()...\n");
-		close(fd);
+		close(fd_mmap);
 		return (-1);
 	}
 
@@ -110,7 +114,7 @@ int main(int argc, char *argv[]) {
 	}
 
 	if ((err = pthread_create(&tid, NULL, &audio_thread, NULL)) != 0) {
-		printf("thread_create failed: [%s]\n", strerror(error));
+		printf("thread_create failed: [%s]\n", strerror(err));
 	}
 
 
@@ -121,19 +125,29 @@ int main(int argc, char *argv[]) {
 		}
 
 		if (ev.type == EV_KEY && ev.value == KEY_PRESSED) {
-			//Set tone_volume
-			pthread_mutex_lock(&mutex_tone_volume);
-			tone_volume[tone_index] = 1;
-			pthread_mutex_unlock(&mutex_tone_volume);
-			tone_fade_factor[tone_index] = //
+			//match key to tone
+			for (ind = 0; ind < TOTAL_TONES; ind++) {
+				if (keyboard_note[ind] == (int) ev.code) {
+					//Set tone_volumes
+					pthread_mutex_lock(&mutex_tone_volume);
+					tone_volumes[ind] = 1;
+					pthread_mutex_unlock(&mutex_tone_volume);
+					ind = TOTAL_TONES + 1;
+				}
+			}
 			printf("Pressed key: )x%04x\n", (int) ev.code);
 		}	 
 		else if (ev.type == EV_KEY && ev.value == KEY_RELEASED) {
-			//Set tone_volume to zero
-			pthread_mutex_lock(&mutex_tone_volume);
-			tone_volume[tone_index] = 0;
-			pthread_mutex_unlock(&mutex_tone_volume);
-			printf("Released key: 0x%04x\n"), (int) ev.code);
+			for (ind = 0; ind < TOTAL_TONES; ind++) {
+				if (keyboard_note[ind] == (int) ev.code) {
+					//Set tone_volumes
+					pthread_mutex_lock(&mutex_tone_volume);
+					tone_volumes[ind] = 0;
+					pthread_mutex_unlock(&mutex_tone_volume);
+					ind = TOTAL_TONES + 1;
+				}
+			}
+			printf("Released key: 0x%04x\n", (int) ev.code);
 		}
 	}
 
